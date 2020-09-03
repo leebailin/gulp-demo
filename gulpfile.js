@@ -1,176 +1,198 @@
-const { src, dest, parallel, series, watch } = require('gulp')
+const cwd = process.cwd()
+const path = require('path')
+const { src, dest, lastRun, parallel, series, watch } = require('gulp')
 const del = require('del')
+const autoprefixer = require('autoprefixer')
 
 const browserSync = require('browser-sync')
 const bs = browserSync.create()
 
 const loadPlugin = require('gulp-load-plugins')
-const plugins = loadPlugin()
-// const sass = require('gulp-sass')
-// const babel = require('gulp-babel')
-// const swig = require('gulp-swig')
-// const imagemin = require('gulp-imagemin')
+const $ = loadPlugin()
+
+let config
+let defaultConfig = {
+  build: {
+    src: 'src',
+    dest: 'dist',
+    temp: 'temp',
+    public: 'public',
+    paths: {
+      styles: 'assets/styles/**/*.scss',
+      scripts: 'assets/scripts/**/*.js',
+      pages: '**/*.html',
+      images: 'assets/images/**/*.{jpg,jpeg,png,gif,svg}',
+      fonts: 'assets/fonts/**/*.{eot,svg,ttf,woff,woff2}'
+    }
+  }
+}
+try {
+  const loadConfig = require(path.join(cwd, 'pages.config.js'))
+  config = new Proxy(defaultConfig, {
+    set: function (target, name, value) {
+      return target[name] = Object.assign({}, target[name], value)
+    }
+  })
+  Object.assign(config, loadConfig)
+} catch (e) {}
+
+const clean = () => {
+  return del([config.build.temp, config.build.dest])
+}
 
 const style = () => {
-  // base 选项定义转换是的基准路径，也就是保留 src 原目录结构
-  return src('src/assets/styles/*.scss', { base: 'src' })
-    .pipe(plugins.sass({ outputStyle: 'expanded' }))
-    .pipe(dest('temp'))
+  return src(config.build.paths.styles, {
+    cwd: config.build.src,
+    base: config.build.src
+  })
+    .pipe($.plumber({ errorHandler: $.sass.logError }))
+    .pipe(
+      $.sass.sync({
+        outputStyle: 'expanded',
+        precision: 10,
+        includePaths: ['.']
+      })
+    )
+    .pipe($.postcss([autoprefixer()]))
+    .pipe(dest(config.build.temp, { sourcemaps: '.' }))
     .pipe(bs.reload({ stream: true }))
 }
 
 const script = () => {
-  return src('src/assets/scripts/*.js', { base: 'src' })
-    .pipe(plugins.babel({ presets: ['@babel/preset-env'] }))
-    .pipe(dest('temp'))
+  return src(config.build.paths.scripts, {
+    cwd: config.build.src,
+    base: config.build.src
+  })
+    .pipe($.plumber())
+    .pipe($.babel({ presets: ['@babel/preset-env'] }))
+    .pipe(dest(config.build.temp, { sourcemaps: '.' }))
     .pipe(bs.reload({ stream: true }))
 }
 
-// 模板中用到的数据
-const data = {
-  menus: [
-    {
-      name: 'Home',
-      icon: 'aperture',
-      link: 'index.html'
-    },
-    {
-      name: 'Features',
-      link: 'features.html'
-    },
-    {
-      name: 'About',
-      link: 'about.html'
-    },
-    {
-      name: 'Contact',
-      link: '#',
-      children: [
-        {
-          name: 'Github',
-          link: 'https://github.com/leebailin'
-        },
-        {
-          name: 'About',
-          link: 'https://baidu.com/'
-        },
-        {
-          name: 'divider'
-        },
-        {
-          name: 'About',
-          link: 'https://github.com/leebailin'
-        }
-      ]
-    }
-  ],
-  pkg: require('./package.json'),
-  date: new Date()
-}
-
 const page = () => {
-  // 如果其他文件夹下的子目录有 html 文件需要编译的话 可以使用 ‘src/**/*.html’
-  // 这个项目我们只需要编译 src 目录下的 html 文件，src 下的其他目录的 html 文件只是通过模板语法引入到主文件使用，不需要编译到目标目录下
-  // 所以只需要 ‘src/*.html’
-  return src('src/*.html', { base: 'src' })
-    .pipe(plugins.swig({ data, defaults: { cache: false } })) // 防止模板缓存导致页面不能及时更新
-    .pipe(dest('temp'))
+  return src(config.build.paths.pages, {
+    cwd: config.build.src,
+    base: config.build.src,
+    ignore: ['{layouts,partials}/**']
+  })
+    .pipe($.plumber())
+    .pipe(
+      $.swig({ data: config.data, defaults: { cache: false } })
+    )
+    .pipe(dest(config.build.temp))
     .pipe(bs.reload({ stream: true }))
 }
 
 const image = () => {
-  return src('src/assets/images/**', { base: 'src' })
-    .pipe(plugins.imagemin())
-    .pipe(dest('dist'))
+  return src(config.build.paths.images, {
+    cwd: config.build.src,
+    base: config.build.src,
+    since: lastRun(image)
+  })
+    .pipe($.plumber())
+    .pipe($.imagemin())
+    .pipe(dest(config.build.dest))
 }
 
 const font = () => {
-  return src('src/assets/fonts/**', { base: 'src' })
-    .pipe(plugins.imagemin())
-    .pipe(dest('dist'))
+  return src(config.build.paths.fonts, {
+    cwd: config.build.src, base: config.build.src
+  })
+    .pipe($.plumber())
+    .pipe($.imagemin())
+    .pipe(dest(config.build.dest))
 }
 
 const extra = () => {
-  return src('public/**', { base: 'public' })
-    .pipe(dest('dist'))
+  return src('**', { cwd: config.build.public, base: config.build.public, dot: true })
+    .pipe(dest(config.build.dest))
 }
 
-const clean = () => {
-  return del(['dist', 'temp'])
+const useref = () => {
+  const htmlminOpts = {
+    collapseWhitespace: true,
+    minifyCSS: true,
+    minifyJS: true,
+    processConditionalComments: true,
+    removeComments: true,
+    removeEmptyAttributes: true,
+    removeScriptTypeAttributes: true,
+    removeStyleLinkTypeAttributes: true
+  }
+
+  return src(config.build.paths.pages, { cwd: config.build.temp, base: config.build.temp })
+    .pipe($.plumber())
+    .pipe($.useref({ searchPath: ['.', '..'] }))
+    .pipe($.if(/\.js$/, $.uglify()))
+    .pipe($.if(/\.css$/, $.cleanCss()))
+    .pipe($.if(/\.html$/, $.htmlmin(htmlminOpts)))
+    .pipe(dest(config.build.dest))
 }
 
-const serve = () => {
-  // 第一个参数：监听文件路径 第二个参数：文件变化后执行的任务
-  watch('src/assets/styles/*.scss', style)
-  watch('src/assets/scripts/*.js', script)
-  watch('src/*.html', page)
-  // watch('src/assets/images/**', image)
-  // watch('src/assets/fonts/**', font)
-  // watch('public/**', extra)
-  watch([
-    'src/assets/images/**',
-    'src/assets/fonts/**',
-    'public/**',
-  ], async () => {
-    await bs.reload()
-  })
+const measure = () => {
+  return src('**', { cwd: config.build.dest })
+    .pipe($.plumber())
+    .pipe(
+      $.size({
+        title: `mode build`,
+        gzip: true
+      })
+    )
+}
+
+const devServer = () => {
+  watch(config.build.paths.styles, { cwd: config.build.src }, style)
+  watch(config.build.paths.scripts, { cwd: config.build.src }, script)
+  watch(config.build.paths.pages, { cwd: config.build.src }, page)
+  watch(
+    [config.build.paths.images, config.build.paths.fonts],
+    { cwd: config.build.src },async () => await bs.reload()
+  )
+  watch('**', { cwd: config.build.public }, async () => await bs.reload())
 
   bs.init({
-    notify: false, // 启动页面时右上角的提示
-    port: 2080, // 设置本地服务器端口
-    // files: 'dist/**', // 监听目标目录下所有文件修改后自动更新浏览器
+    notify: false,
+    port: 2080,
     server: {
-      // 服务器根目录（构建后的目录）
-      baseDir: ['temp', 'src', 'public'],
-      // 处理第三方库文件（因为我们还未处理第三方库到我们的 dist 目录下，比如 bootstrap，jquery）
-      routes: {
-        // 请求的前缀       目录
-        '/node_modules': 'node_modules'
-      }
+      baseDir: [config.build.temp, config.build.src, config.build.public],
+      routes: { '/node_modules': 'node_modules' }
     }
   })
 }
 
-const useref = () => {
-  return src('temp/*.html', { base: 'temp' })
-    // 在 temp 和 根目录寻找需要合并的文件
-    // 对应 temp 下的 assets/styles/main.css 和 根目录下的 /node_modules
-    .pipe(plugins.useref({ searchPath: ['temp', '.'] }))
-    // html js css
-    .pipe(plugins.if(/\.js$/, plugins.uglify()))
-    .pipe(plugins.if(/\.css$/, plugins.cleanCss()))
-    .pipe(plugins.if(/\.html$/, plugins.htmlmin({
-      collapseWhitespace: true,
-      minifyCSS: true,
-      minifyJS: true
-    })))
-    .pipe(dest('dist'))
+const distServer = () => {
+  bs.init({
+    notify: false,
+    port: 2080,
+    server: config.build.dest
+  })
 }
-
-// const compile = parallel(style, script, page, image, font)
 const compile = parallel(style, script, page)
 
-const develop = series(compile, serve)
+const serve = series(compile, devServer)
 
-// 上线之前执行的任务
-// const build = series(
-//   clean,
-//   parallel(compile, image, font, extra)
-// )
 const build = series(
   clean,
-  parallel(
-    // 构建 html css js 到 temp 目录 再 执行 useref 任务
-    series(compile, useref),
-    image,
-    font,
-    extra
-  )
+  parallel(series(compile, useref), image, font, extra),
+  measure
 )
+
+const start = series(build, distServer)
 
 module.exports = {
   clean,
+  style,
+  script,
+  page,
+  useref,
+  image,
+  font,
+  extra,
+  measure,
+  devServer,
+  distServer,
+  compile,
+  serve,
   build,
-  develop
+  start
 }
-
