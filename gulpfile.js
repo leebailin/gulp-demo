@@ -10,8 +10,7 @@ const bs = browserSync.create()
 const loadPlugin = require('gulp-load-plugins')
 const $ = loadPlugin()
 
-let config
-let defaultConfig = {
+let config = {
   build: {
     src: 'src',
     dest: 'dist',
@@ -26,15 +25,20 @@ let defaultConfig = {
     }
   }
 }
+function deepObjectMerge(FirstOBJ, SecondOBJ) {
+  for (let key in SecondOBJ) {
+    if(SecondOBJ.hasOwnProperty(key)) {
+      FirstOBJ[key] = FirstOBJ[key] && FirstOBJ[key].toString() === "[object Object]" ?
+        deepObjectMerge(FirstOBJ[key], SecondOBJ[key]) : FirstOBJ[key] = SecondOBJ[key];
+    }
+  }
+  return FirstOBJ;
+}
+
 try {
   const loadConfig = require(path.join(cwd, 'pages.config.js'))
-  config = new Proxy(defaultConfig, {
-    set: function (target, name, value) {
-      return target[name] = Object.assign({}, target[name], value)
-    }
-  })
-  Object.assign(config, loadConfig)
-} catch (e) {}
+  config = deepObjectMerge(config, loadConfig)
+} catch (e) { }
 
 const clean = () => {
   return del([config.build.temp, config.build.dest])

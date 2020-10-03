@@ -41,6 +41,6 @@ module.exports = {
   },
   build: {
     temp: '.temp',
-    dist: 'release'
+    dest: 'release'
   }
 }
